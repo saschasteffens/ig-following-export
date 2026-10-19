@@ -12,10 +12,10 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
-async function setup(url = 'https://www.instagram.com/target/following/') {
+async function setup(url = 'https://www.instagram.com/target/following/', body = html) {
   const context = await browser.newContext({ acceptDownloads: true });
   const target = await context.newPage();
-  await target.route('**/*', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: html }));
+  await target.route('**/*', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body }));
   await target.goto(url);
   for (const file of ['core.js', 'collector.js']) await target.addScriptTag({path: path.join(__dirname, '../extension', file)});
   const popup = await context.newPage();
@@ -78,6 +78,27 @@ test('a start error keeps Start enabled so the user can correct the open list an
     await popup.locator('#start').click();
     await popup.waitForFunction(() => document.querySelector('#badge').textContent === 'Collecting');
     assert.equal(await popup.locator('#download').isEnabled(), true);
+  } finally { await context.close(); }
+});
+
+test('the confirmation button starts a collection when the title cannot be identified', async () => {
+  const { context, popup } = await setup('https://www.instagram.com/target/', html.replace('<h1>Following</h1>', '<h1>Unknown title</h1>'));
+  try {
+    await popup.locator('#start').click();
+    await popup.waitForFunction(() => !document.querySelector('#confirmation').hidden);
+    assert.match(await popup.locator('#status').textContent(), /Following list for @target/);
+    assert.equal(await popup.locator('#count').textContent(), '0');
+    await popup.locator('#confirm-following').click();
+    await popup.waitForFunction(() => document.querySelector('#count').textContent === '3');
+    assert.equal(await popup.locator('#confirmation').isVisible(), false);
+    assert.equal(await popup.locator('#download').isEnabled(), true);
+    await popup.locator('#stop').click();
+    await popup.waitForFunction(() => document.querySelector('#badge').textContent === 'Paused');
+    const downloading = popup.waitForEvent('download');
+    await popup.locator('#download').click();
+    const download = await downloading;
+    assert.match(download.suggestedFilename(), /^target-following-.*\.csv$/);
+    assert.equal(await download.failure(), null);
   } finally { await context.close(); }
 });
 

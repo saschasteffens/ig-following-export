@@ -18,10 +18,10 @@ async function fixture(url = 'https://www.instagram.com/target/following/', body
   await page.addScriptTag({ path: path.join(__dirname, '../extension/collector.js') });
   return page;
 }
-async function command(page, command) {
-  return page.evaluate(command => new Promise(resolve => {
-    globalThis.messageHandler({ app: 'following-export', command }, {}, resolve);
-  }), command);
+async function command(page, command, options = {}) {
+  return page.evaluate(message => new Promise(resolve => {
+    globalThis.messageHandler(message, {}, resolve);
+  }), { ...options, app: 'following-export', command });
 }
 
 test('collects a rendered list, deduplicates avatar/name links and loads new rows by scrolling', async () => {
@@ -88,7 +88,79 @@ test('does not mistake account row text or Following buttons for the window titl
     .replace('Renée 世界', 'Following');
   const page = await fixture('https://www.instagram.com/target/', body);
   try {
-    assert.ok((await command(page, 'start')).error);
+    assert.equal((await command(page, 'start')).needsConfirmation, true);
+    assert.equal((await command(page, 'export')).count, 0);
+  } finally { await page.close(); }
+});
+
+test('recognizes a centered title inside a full-screen overlay with scrolling wrappers and nested dialogs', async () => {
+  const page = await fixture('https://www.instagram.com/the.daily.eye/');
+  try {
+    await page.evaluate(() => {
+      const panel = document.querySelector('[role=dialog]');
+      const overlay = document.createElement('div');
+      overlay.setAttribute('role', 'dialog');
+      overlay.style.cssText = 'position:fixed;inset:0;width:auto;height:100vh;padding:0';
+      panel.replaceWith(overlay);
+      overlay.append(panel);
+      panel.setAttribute('role', 'button');
+      panel.style.cssText = 'position:absolute;top:180px;left:200px;width:400px;overflow-y:auto';
+      panel.querySelector('h1').innerHTML = '<span><span>Following</span></span><svg aria-hidden="true"></svg>';
+      panel.querySelector('.list').setAttribute('role', 'dialog');
+    });
+    const result = await command(page, 'start');
+    assert.equal(result.status, 'collecting');
+    assert.equal(result.source, 'the.daily.eye');
+    assert.equal(result.count, 2);
+    await page.waitForFunction(() => {
+      let state; messageHandler({app:'following-export',command:'status'}, {}, s => { state = s; });
+      return state.count === 3;
+    });
+  } finally { await page.close(); }
+});
+
+test('an unreadable window title offers explicit confirmation and then keeps collecting the same list', async () => {
+  const body = html.replace('<h1>Following</h1>', '<h1>Abonniert</h1>');
+  const page = await fixture('https://www.instagram.com/target/', body);
+  try {
+    await page.clock.install();
+    // A confirmation cannot be sent before the prompt has been shown.
+    const prompt = await command(page, 'start', { confirmFollowing: true, source: 'target' });
+    assert.equal(prompt.needsConfirmation, true);
+    assert.equal(prompt.source, 'target');
+    assert.equal((await command(page, 'export')).count, 0);
+    const result = await command(page, 'start', { confirmFollowing: true, source: 'target' });
+    assert.equal(result.status, 'collecting');
+    assert.equal(result.count, 2);
+    await page.clock.runFor(1600);
+    assert.equal((await command(page, 'status')).status, 'collecting');
+    assert.equal((await command(page, 'export')).count, 3);
+  } finally { await page.close(); }
+});
+
+test('confirmation cannot override an identified Followers list', async () => {
+  const page = await fixture('https://www.instagram.com/target/', html.replace('<h1>Following</h1>', '<h1>Unknown title</h1>'));
+  try {
+    assert.equal((await command(page, 'start')).needsConfirmation, true);
+    await page.evaluate(() => { document.querySelector('h1').textContent = 'Followers'; });
+    assert.match((await command(page, 'start', { confirmFollowing: true, source: 'target' })).error, /Followers/);
+    assert.equal((await command(page, 'export')).count, 0);
+  } finally { await page.close(); }
+});
+
+test('confirmation applies only to the prompted profile and window', async () => {
+  const page = await fixture('https://www.instagram.com/target/', html.replace('<h1>Following</h1>', '<h1>Unknown title</h1>'));
+  try {
+    assert.equal((await command(page, 'start')).needsConfirmation, true);
+    await page.evaluate(() => history.replaceState({}, '', '/different/'));
+    const prompt = await command(page, 'start', { confirmFollowing: true, source: 'target' });
+    assert.equal(prompt.needsConfirmation, true);
+    assert.equal(prompt.source, 'different');
+    await page.evaluate(() => {
+      const original = document.querySelector('[role=dialog]');
+      original.replaceWith(original.cloneNode(true));
+    });
+    assert.equal((await command(page, 'start', { confirmFollowing: true, source: 'different' })).needsConfirmation, true);
     assert.equal((await command(page, 'export')).count, 0);
   } finally { await page.close(); }
 });

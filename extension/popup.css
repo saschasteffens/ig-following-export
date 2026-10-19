@@ -27,6 +27,7 @@ button:disabled{cursor:default;opacity:.45}
 .count>span:last-child{font-size:11px;color:#657469}
 #status{font-size:11px;color:#667468;line-height:1.5;min-height:33px;margin:5px 0 10px}
 .actions{display:flex;gap:8px}
+#confirmation{margin:0 0 10px}#confirm-following{width:100%}
 .primary{flex:1;background:#254c42;color:white;padding:10px 8px;font-size:12px;font-weight:600}
 .primary:hover:enabled{background:#1a3d33}
 .secondary{background:#eff2ec;color:#254c42;padding:10px 13px;font-size:12px}

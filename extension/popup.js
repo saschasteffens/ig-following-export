@@ -5,17 +5,27 @@ let tabId = null;
 let connected = false;
 let busy = false;
 let lastStatus = null;
+let confirmationSource = null;
 
 function showError(message) {
   $("status").textContent = message;
 }
 
-async function send(command) {
+async function send(command, options = {}) {
   if (!tabId) throw new Error("Open an Instagram tab first, then reopen this extension.");
-  return chrome.tabs.sendMessage(tabId, { app: "following-export", command });
+  return chrome.tabs.sendMessage(tabId, { ...options, app: "following-export", command });
 }
 
 function render(state) {
+  if (state.needsConfirmation) {
+    if (lastStatus) render(lastStatus);
+    confirmationSource = state.source;
+    $("confirmation").hidden = false;
+    showError(state.message);
+    return;
+  }
+  $("confirmation").hidden = true;
+  confirmationSource = null;
   if (state.error) {
     if (lastStatus) render(lastStatus);
     showError(state.error);
@@ -33,12 +43,12 @@ function render(state) {
   $("clear").disabled = !state.count || busy;
 }
 
-async function action(command) {
+async function action(command, options = {}) {
   if (busy) return;
   busy = true;
   if (lastStatus) render(lastStatus);
   try {
-    const result = await send(command);
+    const result = await send(command, options);
     busy = false;
     render(result);
   } catch {
@@ -63,6 +73,7 @@ $("profile-form").addEventListener("submit", async event => {
 });
 
 $("start").addEventListener("click", () => action("start"));
+$("confirm-following").addEventListener("click", () => action("start", { confirmFollowing: true, source: confirmationSource }));
 $("stop").addEventListener("click", () => action("stop"));
 $("clear").addEventListener("click", () => action("clear"));
 $("download").addEventListener("click", async () => {

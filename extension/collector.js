@@ -12,13 +12,22 @@
   let stagnant = 0;
   let rounds = 0;
   let lastCount = 0;
+  let pendingConfirmation = null;
+  let confirmedList = null;
 
   function visible(element) {
     return element instanceof HTMLElement && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
   }
 
   function findDialog() {
-    return [...document.querySelectorAll('[role="dialog"]')].filter(visible).at(-1) || null;
+    const selector = '[role="dialog"], dialog[open], [aria-modal="true"]';
+    let found = [...document.querySelectorAll(selector)].filter(visible).at(-1) || null;
+    // Instagram can nest the list inside a second dialog. Its title belongs
+    // to the outer window, whose bounding box may cover the entire screen.
+    for (let parent = found?.parentElement; parent; parent = parent.parentElement) {
+      if (parent.matches(selector) && visible(parent)) found = parent;
+    }
+    return found;
   }
 
   function listKind(openDialog) {
@@ -32,30 +41,39 @@
       const title = id && document.getElementById(id);
       if (title && visible(title)) add(title.textContent);
     }
-    const bounds = openDialog.getBoundingClientRect();
-    for (const element of openDialog.querySelectorAll('h1, h2, h3, [role="heading"], span, div')) {
-      if (!visible(element) || element.closest('a, button, [role="button"]')) continue;
-      if (element.children.length && !element.matches('h1, h2, h3, [role="heading"]')) continue;
-      const rect = element.getBoundingClientRect();
-      if (rect.top < bounds.top || rect.bottom > Math.min(bounds.bottom, bounds.top + 100)) continue;
-      // Account rows can contain a Following button or even a name of "Following".
-      // Only read the window header, outside any scrolling list or its controls.
-      let inList = false;
-      for (let parent = element.parentElement; parent && parent !== openDialog; parent = parent.parentElement) {
-        if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) { inList = true; break; }
+    const rows = [...new Set([...openDialog.querySelectorAll('a[href]')]
+      .filter(anchor => core.profileFromURL(anchor.href))
+      .map(anchor => rowFor(anchor, openDialog)).filter(Boolean))];
+    // Read actual title text wherever the window is positioned. Exclude
+    // account rows and their Follow/Following controls, not entire scrollable
+    // layout wrappers (which may also contain the title).
+    const walker = document.createTreeWalker(openDialog, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!/^\s*follow(?:ing|ers)\s*$/i.test(node.textContent)) continue;
+      const element = node.parentElement;
+      if (!visible(element) || rows.some(row => row.contains(element))) continue;
+      let inControl = false;
+      for (let parent = element; parent && parent !== openDialog; parent = parent.parentElement) {
+        if (parent.matches('a, button, input, [role="button"]')) {
+          // Some modal backdrops have role=button; that wrapper is not a
+          // per-account action and must not hide the window's title.
+          if (parent.matches('[role="button"]') && rows.some(row => parent.contains(row))) continue;
+          inControl = true;
+          break;
+        }
       }
-      if (!inList) add(element.textContent);
+      if (!inControl) add(node.textContent);
     }
     return kinds.size === 1 ? [...kinds][0] : kinds.size ? "ambiguous" : null;
   }
 
   function followingSource(openDialog) {
     const kind = listKind(openDialog);
-    if (kind && kind !== "following") return null;
-    // Instagram often leaves /username/ unchanged when a list opens. In that
-    // layout, require a confirmed Following title before using the profile URL.
-    return core.followingFromURL(location.href)
-      || (kind === "following" ? core.profileFromURL(location.href) : null);
+    if (kind === "followers") return null;
+    const routedSource = core.followingFromURL(location.href);
+    const source = routedSource || core.profileFromURL(location.href);
+    const confirmed = confirmedList?.dialog === openDialog && confirmedList.source === source;
+    return source && (kind === "following" || routedSource || confirmed) ? source : null;
   }
 
   function sameList() {
@@ -63,8 +81,8 @@
       && followingSource(dialog) === state.source;
   }
 
-  function rowFor(anchor) {
-    for (let element = anchor.parentElement; element && element !== dialog; element = element.parentElement) {
+  function rowFor(anchor, boundary = dialog) {
+    for (let element = anchor.parentElement; element && element !== boundary; element = element.parentElement) {
       if (!element.querySelector('button, [role="button"]')) continue;
       const names = new Set([...element.querySelectorAll('a[href]')].map(a => core.profileFromURL(a.href)).filter(Boolean));
       if (names.size === 1) return element;
@@ -141,15 +159,31 @@
     timer = setTimeout(tick, 1500);
   }
 
-  function start() {
+  function start(options = {}) {
     const found = findDialog();
     if (!found) return { error: "The Following window isn’t open. Click Following on the profile, then try again." };
-    const source = followingSource(found);
-    if (!source) return { error: "Couldn’t confirm the Following window for this profile. Its title must say Following; Followers lists cannot be exported with this tool." };
+    const source = core.followingFromURL(location.href) || core.profileFromURL(location.href);
+    if (!source || listKind(found) === "followers") {
+      pendingConfirmation = null;
+      return { error: "This is not a Following list for an Instagram profile. Open the profile’s Following list; Followers lists cannot be exported with this tool." };
+    }
     if (state.status === "collecting") return snapshot(false);
     if (source !== state.source && accounts.size) {
       return { error: `You still have collected accounts from @${state.source}. Download them, then use Clear collected accounts before starting a different list.` };
     }
+    if (!followingSource(found)) {
+      const canConfirm = options.confirmFollowing === true && options.source === source
+        && pendingConfirmation?.dialog === found && pendingConfirmation.source === source;
+      if (canConfirm) confirmedList = { dialog: found, source };
+      else {
+        pendingConfirmation = { dialog: found, source };
+        return {
+          needsConfirmation: true, source,
+          message: `Is the open window the Following list for @${source}? If so, confirm below to collect it.`
+        };
+      }
+    }
+    pendingConfirmation = null;
     if (source !== state.source) accounts.clear();
     dialog = found;
     state.source = source;
@@ -173,7 +207,7 @@
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     if (message?.app !== "following-export") return;
     try {
-      if (message.command === "start") respond(start());
+      if (message.command === "start") respond(start(message));
       else if (message.command === "stop") {
         collect();
         finish("paused", "Paused. Download your collected accounts or continue scanning.");
@@ -181,6 +215,8 @@
       } else if (message.command === "clear") {
         finish("idle", "Cleared. Open a Following list to begin again.");
         accounts.clear();
+        pendingConfirmation = null;
+        confirmedList = null;
         state.source = "";
         state.startedAt = null;
         respond(snapshot(false));

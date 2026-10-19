@@ -9,7 +9,7 @@
   <script src="popup.js" defer></script>
 </head>
 <body>
-  <header><span class="mark" aria-hidden="true">F</span><span>FOLLOWING EXPORT</span><span class="local">LOCAL ONLY</span></header>
+  <header><span class="mark" aria-hidden="true">F</span><span>FOLLOWING EXPORT</span><span class="local">v0.1.2 · LOCAL</span></header>
   <main>
     <h1>Their Following list.</h1>
     <p class="intro">Export the accounts someone follows to a spreadsheet.</p>
@@ -22,6 +22,7 @@
       <div class="progress-heading"><span id="source">READY WHEN YOU ARE</span><span id="badge">Idle</span></div>
       <div class="count"><span id="count">0</span> <span>accounts collected</span></div>
       <p id="status" role="status" aria-live="polite">Open an Instagram tab to get started.</p>
+      <div id="confirmation" hidden><button id="confirm-following" class="primary">Yes, collect this Following list</button></div>
       <div class="actions"><button id="start" class="primary" disabled>Start collecting</button><button id="stop" class="secondary" disabled>Pause</button></div>
     </section>
     <button id="download" class="download" disabled>Download CSV</button>
