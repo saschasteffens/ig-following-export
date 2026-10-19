@@ -41,8 +41,8 @@ async function setup(url = 'https://www.instagram.com/target/following/') {
   return { context, target, popup };
 }
 
-test('popup starts and pauses a collection, then downloads a CSV with the real collected rows', async () => {
-  const { context, popup } = await setup();
+test('popup collects at an unchanged profile URL, pauses, and downloads a CSV with the collected rows', async () => {
+  const { context, popup } = await setup('https://www.instagram.com/target/');
   const errors = [];
   popup.on('pageerror', error => errors.push(error.message));
   const output = await fs.mkdtemp(path.join(os.tmpdir(), 'ig-download-test-'));

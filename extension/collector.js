@@ -21,6 +21,48 @@
     return [...document.querySelectorAll('[role="dialog"]')].filter(visible).at(-1) || null;
   }
 
+  function listKind(openDialog) {
+    const kinds = new Set();
+    const add = text => {
+      const label = String(text || "").trim().toLowerCase();
+      if (label === "following" || label === "followers") kinds.add(label);
+    };
+    add(openDialog.getAttribute("aria-label"));
+    for (const id of (openDialog.getAttribute("aria-labelledby") || "").split(/\s+/)) {
+      const title = id && document.getElementById(id);
+      if (title && visible(title)) add(title.textContent);
+    }
+    const bounds = openDialog.getBoundingClientRect();
+    for (const element of openDialog.querySelectorAll('h1, h2, h3, [role="heading"], span, div')) {
+      if (!visible(element) || element.closest('a, button, [role="button"]')) continue;
+      if (element.children.length && !element.matches('h1, h2, h3, [role="heading"]')) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.top < bounds.top || rect.bottom > Math.min(bounds.bottom, bounds.top + 100)) continue;
+      // Account rows can contain a Following button or even a name of "Following".
+      // Only read the window header, outside any scrolling list or its controls.
+      let inList = false;
+      for (let parent = element.parentElement; parent && parent !== openDialog; parent = parent.parentElement) {
+        if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) { inList = true; break; }
+      }
+      if (!inList) add(element.textContent);
+    }
+    return kinds.size === 1 ? [...kinds][0] : kinds.size ? "ambiguous" : null;
+  }
+
+  function followingSource(openDialog) {
+    const kind = listKind(openDialog);
+    if (kind && kind !== "following") return null;
+    // Instagram often leaves /username/ unchanged when a list opens. In that
+    // layout, require a confirmed Following title before using the profile URL.
+    return core.followingFromURL(location.href)
+      || (kind === "following" ? core.profileFromURL(location.href) : null);
+  }
+
+  function sameList() {
+    return dialog && dialog.isConnected && visible(dialog) && findDialog() === dialog
+      && followingSource(dialog) === state.source;
+  }
+
   function rowFor(anchor) {
     for (let element = anchor.parentElement; element && element !== dialog; element = element.parentElement) {
       if (!element.querySelector('button, [role="button"]')) continue;
@@ -33,7 +75,7 @@
   }
 
   function collect() {
-    if (!dialog || core.followingFromURL(location.href) !== state.source) return;
+    if (!sameList()) return;
     // Restrict to the list's scroll container to exclude suggested accounts elsewhere.
     const scope = scroller();
     for (const anchor of scope.querySelectorAll('a[href]')) {
@@ -74,7 +116,7 @@
 
   function tick() {
     if (state.status !== "collecting") return;
-    if (core.followingFromURL(location.href) !== state.source || !dialog.isConnected || !visible(dialog)) {
+    if (!sameList()) {
       finish("paused", "The list was closed or the page changed. Your collected accounts are still available to download.");
       return;
     }
@@ -100,10 +142,10 @@
   }
 
   function start() {
-    const source = core.followingFromURL(location.href);
-    if (!source) return { error: "On Instagram, open the account’s profile and click its Following count. Followers lists cannot be exported with this tool." };
     const found = findDialog();
     if (!found) return { error: "The Following window isn’t open. Click Following on the profile, then try again." };
+    const source = followingSource(found);
+    if (!source) return { error: "Couldn’t confirm the Following window for this profile. Its title must say Following; Followers lists cannot be exported with this tool." };
     if (state.status === "collecting") return snapshot(false);
     if (source !== state.source && accounts.size) {
       return { error: `You still have collected accounts from @${state.source}. Download them, then use Clear collected accounts before starting a different list.` };
