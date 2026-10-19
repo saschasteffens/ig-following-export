@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Following List → CSV",
+  "version": "0.1.0",
+  "description": "Export an Instagram Following list you can view to a CSV for Google Sheets. Runs locally in your browser.",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_title": "Export Following list",
+    "default_popup": "popup.html"
+  }
+}

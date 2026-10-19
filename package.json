@@ -1,0 +1,15 @@
+{
+  "name": "ig-following-export",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local browser extension for exporting visible Instagram Following lists to CSV.",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "node --test tests/*.browser.cjs",
+    "package": "python3 scripts/package.py"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  },
+  "engines": { "node": ">=22" }
+}
